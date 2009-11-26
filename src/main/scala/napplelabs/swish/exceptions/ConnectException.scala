@@ -23,3 +23,8 @@ THE SOFTWARE.
 
 http://www.opensource.org/licenses/mit-license.php
 */
+
+
+package napplelabs.swish.exceptions
+
+class ConnectException(message: String) extends Exception(message)
