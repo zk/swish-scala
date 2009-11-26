@@ -22,8 +22,11 @@ Swish.withServer(serverConfig) {
 
 See /test/napplelabs/swish/example for more examples, specifically:
 
-###Simple.scala
+### Simple scala
 Dead-simple connect and execute command example.
 
-###CustomCommands.scala
+### CustomCommands.scala
 Modularization of exec, commands encapsulate error handling and marshalling.  I'm still trying to figure out what the api for this should look like.
+
+### On Deck
+A better dsl
