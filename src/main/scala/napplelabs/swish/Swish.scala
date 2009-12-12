@@ -27,12 +27,17 @@ http://www.opensource.org/licenses/mit-license.php
 
 package napplelabs.swish
 
-import exceptions.ConnectException
+import exceptions.{CommandFailedException, ConnectException}
 import io.Source
 import java.lang.String
 import com.jcraft.jsch.{ChannelExec, Session, JSch}
+import collection.Iterator
+import org.slf4j.LoggerFactory
 
 object Swish {
+
+    val log = LoggerFactory.getLogger(this.getClass)
+
     def exec(command: String): Process = {
         val commandList = new java.util.ArrayList[String]()
         command.split("\\s+").foreach(commandList.add(_))
@@ -43,16 +48,53 @@ object Swish {
         try {
             val p = pb.start
             p.waitFor
-            val output = Source.fromInputStream(p.getInputStream).toString
+            val lines: Iterator[String] = Source.fromInputStream(p.getInputStream).getLines()
+            val output: String = if (lines.hasNext) {
+                lines.reduceLeft {_ + "\n" + _}
+            } else {
+                ""
+            }
+
+            if (p.exitValue != 0) throw new CommandFailedException("Command returned non-zero: " + output)
+
             new Process(output, p.exitValue)
         } catch {
-            case e => new Process(e.getMessage, 2)
+            //case e => new Process(e.getMessage, 2)
+            case e => throw new CommandFailedException("Command `" + command + "` failed: " + e.getMessage)
         }
     }
 
-    def withServer(sc: ServerConfig)(f: (ServerConnection) => Any) {
+    def execWithMonitor(command: String, f: (String) => Any): ProcessMonitor = {
+        val commandList = new java.util.ArrayList[String]()
+        command.split("\\s+").foreach(commandList.add(_))
 
-        def stuff = println("")
+        val pb = new ProcessBuilder(commandList)
+        pb.redirectErrorStream(true)
+
+        try {
+            val p = pb.start
+
+            val s = Source.fromInputStream(p.getInputStream)
+
+            val pm = new ProcessMonitor(p, s, f)
+
+            new Thread(pm).start
+
+            Runtime.getRuntime.addShutdownHook(new Thread(new Runnable() {
+                def run = {
+                    log.debug("Killing process")
+                    pm.exit
+                }
+            }))
+
+            pm
+        } catch {
+            //case e => new Process(e.getMessage, 2)
+            case e => throw new CommandFailedException("Command `" + command + "` failed: " + e.getMessage)
+        }
+    }
+
+    def withServer[A](sc: ServerConfig)(f: (ServerConnection) => A): A = {
 
         val sch = new JSch()
         sch.addIdentity(sc.privateKey)
@@ -61,47 +103,82 @@ object Swish {
         //sess.setPassword(sc.password)
         try {
             sess.connect
-            f(new ServerConnection(sess))
-
+            val out = f(new ServerConnection(sess, sc))
             sess.disconnect
+
+            out
         } catch {
             case e if (e.getMessage == "Auth fail") =>
-                throw new ConnectException("Couldn't connect with the following server config: " + sc) 
+                throw new ConnectException("Couldn't connect with the following server config: " + sc)
         } finally {
-            if(sess.isConnected()) {
+            if (sess.isConnected()) {
                 sess.disconnect
             }
         }
     }
 }
 
-class ServerConnection(private val session: Session) {
+class ProcessMonitor(p: java.lang.Process, s: Source, f: (String) => Any) extends Runnable {
+    var done = false
+
+    def run: Unit = {
+        while (true) {
+            s.getLines().foreach {
+                line =>
+
+                    if (!done) {
+                        f(line)
+                    } else {
+                        p.destroy
+                        return null
+                    }
+            }
+        }
+
+    }
+
+    def exit = {       
+        done = true
+    }
+
+}
+
+class ServerConnection(private val session: Session, val sc: ServerConfig) {
     def exec(command: String): CommandResult = {
         val c = session.openChannel("exec")
+
         c.asInstanceOf[ChannelExec].setCommand(command)
 
         c.connect
-
         val is = c.getInputStream
-
         val source = Source.fromInputStream(is)
         val output = source.mkString
 
         c.disconnect
 
+        if (c.getExitStatus != 0) {
+            throw new CommandFailedException("Command `" + command + "` failed with output: " + output)
+        }
+
         CommandResult(output, c.getExitStatus)
     }
+
+    def exec(commands: String*): List[CommandResult] = commands.map(exec(_)).toList
+
+    def exec(commands: Iterable[String]): List[CommandResult] = commands.map(exec(_)).toList
 }
 
-case class CommandResult(output: String, exitValue: Int)
+case class CommandResult(output: String, exitValue: Int) {
+    val successful = exitValue == 0
+}
 
 case class ServerConfig(
-        user: String                = "root",
-        host: String                = "localhost",
-        password: String            = "",
-        privateKey: String          = System.getProperty("user.home") + "/.ssh/id_rsa",
-        knownHostsPath: String      = System.getProperty("user.home") + "/.ssh/known_hosts",
-        port: Int                   = 22
+        user: String = "root",
+        host: String = "localhost",
+        password: String = "",
+        privateKey: String = System.getProperty("user.home") + "/.ssh/id_rsa",
+        knownHostsPath: String = System.getProperty("user.home") + "/.ssh/known_hosts",
+        port: Int = 22
         )
 
 case class Process(output: String, exitValue: Int)
@@ -109,3 +186,5 @@ case class Process(output: String, exitValue: Int)
 class Command(command: String, serverConn: ServerConnection) {
     val res = serverConn.exec(command)
 }
+
+
