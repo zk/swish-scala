@@ -94,7 +94,7 @@ object Swish {
         }
     }
 
-    def withServer[A](sc: ServerConfig)(f: (ServerConnection) => A): A = {
+    def withServer(sc: ServerConfig)(f: (ServerConnection) => Any): TaskResult = {
 
         val sch = new JSch()
         sch.addIdentity(sc.privateKey)
@@ -103,25 +103,27 @@ object Swish {
         //sess.setPassword(sc.password)
         try {
             sess.connect
-            val out = f(new ServerConnection(sess, sc))
+            val serverConnection = new ServerConnection(sess, sc)
+            f(serverConnection)
             sess.disconnect
 
-            out
+            TaskResult(serverConnection.report)
         } catch {
+            case e if (e.getMessage == null) => throw e
             case e if (e.getMessage.contains("Auth fail")) =>
                 throw new ConnectException("Couldn't connect with the following server config: " + sc)
             case e if (e.getMessage.contains("Connection refused")) =>
-                throw new ConnectException("Connection refused for server config: " + sc)
-            case e:Exception => {
-                println("MESSAGE: " + e.getMessage)
-                throw e
-            }
+                throw new ConnectException("Connection refused for server config: " + sc)            
         } finally {
             if (sess.isConnected()) {
                 sess.disconnect
             }
         }
     }
+}
+
+case class TaskResult(report: List[CommandResult]) {
+    val succeeded = !report.exists(_.exitValue != 0)
 }
 
 class ProcessMonitor(p: java.lang.Process, s: Source, f: (String) => Any) extends Runnable {
@@ -151,40 +153,46 @@ class ProcessMonitor(p: java.lang.Process, s: Source, f: (String) => Any) extend
 
 class ServerConnection(private val session: Session, val sc: ServerConfig) {
 
-    private var _report = List[String]()
+    private var _report = List[CommandResult]()
     def report = _report.reverse
 
     def exec(command: String): CommandResult = {
         val c = session.openChannel("exec")
 
-        c.asInstanceOf[ChannelExec].setCommand(command)
+        c.asInstanceOf[ChannelExec].setCommand(command)        
 
         c.connect
         val is = c.getInputStream
         val source = Source.fromInputStream(is)
         val output = source.mkString
 
+        val es = c.asInstanceOf[ChannelExec].getErrStream
+        val errorSource = Source.fromInputStream(es)
+        val error = errorSource.mkString
+
         c.disconnect
 
-        if (c.getExitStatus != 0) {
-            throw new CommandFailedException("Command `" + command + "` failed with output: " + output)
-        }
+        val out = CommandResult(command, output, error, c.getExitStatus)
 
-        c.getExitStatus match {
-            case 0 => _report = ("SUCCESS " + command) :: _report
-            case _ => _report = ("FAILURE " + command) :: _report
-        }
+        _report = out :: _report
 
-        CommandResult(output, c.getExitStatus)
+        out
+
+//        c.getExitStatus match {
+//            case 0 => _report = ("SUCCESS <" + command + ">") :: _report
+//            case _ => _report = ("FAILURE <" + command + ">") :: _report
+//        }
+
+
     }
 
-    def exec(commands: String*): List[CommandResult] = commands.map(exec(_)).toList
+//    def exec(commands: String*): List[CommandResult] = commands.map(exec(_)).toList
 
     def exec(commands: Iterable[String]): List[CommandResult] = commands.map(exec(_)).toList
 }
 
-case class CommandResult(output: String, exitValue: Int) {
-    val successful = exitValue == 0
+case class CommandResult(command: String, output: String, error: String, exitValue: Int) {
+    val succeeded = exitValue == 0
 }
 
 case class ServerConfig(

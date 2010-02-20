@@ -5,26 +5,23 @@ import org.junit.Test
 import org.junit.Assert._
 
 class ClosureReturnTypeExample {
-    
-    def runClosure[T](f: Any => T) = {
-        f()
-    }
 
     @Test
-    def testMain() {       
+    def testMain() {
+        val res = Swish.withServer(ServerConfig(user = "zkim")) {
+            ssh =>
+                ssh.exec("ls -aul")
+        }
+
+        assertTrue(res.succeeded)
+
+
         val res2 = Swish.withServer(ServerConfig(user = "zkim")) {
             ssh =>
-                ssh.exec("ls -aul").output                
+                ssh.exec("ls -aul")
+                ssh.exec("cat asdf")
         }
 
-        assertTrue(res2.getClass == classOf[String])
-        assertTrue(res2.size > 0)
-
-        Swish.withServer(ServerConfig(user = "zkim")) {
-            ssh =>
-                ssh.exec("ls -aul")
-                ssh.exec("ls -aul")
-                ssh
-        }
+        assertFalse(res2.succeeded)
     }
 }
