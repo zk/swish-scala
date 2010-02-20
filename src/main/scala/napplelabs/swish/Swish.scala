@@ -108,8 +108,14 @@ object Swish {
 
             out
         } catch {
-            case e if (e.getMessage == "Auth fail") =>
+            case e if (e.getMessage.contains("Auth fail")) =>
                 throw new ConnectException("Couldn't connect with the following server config: " + sc)
+            case e if (e.getMessage.contains("Connection refused")) =>
+                throw new ConnectException("Connection refused for server config: " + sc)
+            case e:Exception => {
+                println("MESSAGE: " + e.getMessage)
+                throw e
+            }
         } finally {
             if (sess.isConnected()) {
                 sess.disconnect
@@ -144,6 +150,10 @@ class ProcessMonitor(p: java.lang.Process, s: Source, f: (String) => Any) extend
 }
 
 class ServerConnection(private val session: Session, val sc: ServerConfig) {
+
+    private var _report = List[String]()
+    def report = _report.reverse
+
     def exec(command: String): CommandResult = {
         val c = session.openChannel("exec")
 
@@ -158,6 +168,11 @@ class ServerConnection(private val session: Session, val sc: ServerConfig) {
 
         if (c.getExitStatus != 0) {
             throw new CommandFailedException("Command `" + command + "` failed with output: " + output)
+        }
+
+        c.getExitStatus match {
+            case 0 => _report = ("SUCCESS " + command) :: _report
+            case _ => _report = ("FAILURE " + command) :: _report
         }
 
         CommandResult(output, c.getExitStatus)
@@ -183,8 +198,6 @@ case class ServerConfig(
 
 case class Process(output: String, exitValue: Int)
 
-class Command(command: String, serverConn: ServerConnection) {
-    val res = serverConn.exec(command)
-}
+
 
 

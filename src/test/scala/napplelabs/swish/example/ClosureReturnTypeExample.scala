@@ -1,33 +1,30 @@
 package napplelabs.swish.example
 
 import napplelabs.swish.{ServerConfig, Swish}
+import org.junit.Test
+import org.junit.Assert._
 
-/**
- * Created by IntelliJ IDEA.
- * User: zkim
- * Date: Dec 1, 2009
- * Time: 9:53:40 PM
- * To change this template use File | Settings | File Templates.
- */
-
-object ClosureReturnTypeExample {
+class ClosureReturnTypeExample {
+    
     def runClosure[T](f: Any => T) = {
         f()
     }
 
-    def main(args: Array[String]): Unit = {
-        val res = runClosure({
-            x =>
-                "asdf"
-        })
-
-
+    @Test
+    def testMain() {       
         val res2 = Swish.withServer(ServerConfig(user = "zkim")) {
-            ssh => List[String]()
+            ssh =>
+                ssh.exec("ls -aul").output                
         }
 
-        println(res2.getClass)
+        assertTrue(res2.getClass == classOf[String])
+        assertTrue(res2.size > 0)
 
-
+        Swish.withServer(ServerConfig(user = "zkim")) {
+            ssh =>
+                ssh.exec("ls -aul")
+                ssh.exec("ls -aul")
+                ssh
+        }
     }
 }
