@@ -31,5 +31,3 @@ Modularization of exec, commands encapsulate error handling and marshalling.  I'
 ### On Deck
 A better dsl
 
-
-new Stuff(

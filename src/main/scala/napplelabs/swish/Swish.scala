@@ -33,9 +33,9 @@ import java.lang.String
 import com.jcraft.jsch.{ChannelExec, Session, JSch}
 import collection.Iterator
 import org.slf4j.LoggerFactory
+import tasks.{TaskResult, EmptyTask, Task}
 
 object Swish {
-
     val log = LoggerFactory.getLogger(this.getClass)
 
     def exec(command: String): Process = {
@@ -94,7 +94,7 @@ object Swish {
         }
     }
 
-    def withServer(sc: ServerConfig)(f: (ServerConnection) => Any): TaskResult = {
+    def withServer(sc: ServerConfig)(f: (ServerConnection) => Any) = {
 
         val sch = new JSch()
         sch.addIdentity(sc.privateKey)
@@ -106,14 +106,12 @@ object Swish {
             val serverConnection = new ServerConnection(sess, sc)
             f(serverConnection)
             sess.disconnect
-
-            TaskResult(serverConnection.report)
         } catch {
             case e if (e.getMessage == null) => throw e
             case e if (e.getMessage.contains("Auth fail")) =>
                 throw new ConnectException("Couldn't connect with the following server config: " + sc)
             case e if (e.getMessage.contains("Connection refused")) =>
-                throw new ConnectException("Connection refused for server config: " + sc)            
+                throw new ConnectException("Connection refused for server config: " + sc)
         } finally {
             if (sess.isConnected()) {
                 sess.disconnect
@@ -122,9 +120,7 @@ object Swish {
     }
 }
 
-case class TaskResult(report: List[CommandResult]) {
-    val succeeded = !report.exists(_.exitValue != 0)
-}
+
 
 class ProcessMonitor(p: java.lang.Process, s: Source, f: (String) => Any) extends Runnable {
     var done = false
@@ -133,7 +129,6 @@ class ProcessMonitor(p: java.lang.Process, s: Source, f: (String) => Any) extend
         while (true) {
             s.getLines().foreach {
                 line =>
-
                     if (!done) {
                         f(line)
                     } else {
@@ -145,7 +140,7 @@ class ProcessMonitor(p: java.lang.Process, s: Source, f: (String) => Any) extend
 
     }
 
-    def exit = {       
+    def exit = {
         done = true
     }
 
@@ -153,20 +148,21 @@ class ProcessMonitor(p: java.lang.Process, s: Source, f: (String) => Any) extend
 
 class ServerConnection(private val session: Session, val sc: ServerConfig) {
 
-    private var _report = List[CommandResult]()
-    def report = _report.reverse
+    def execTask(task: Task) : TaskResult = task.exec(this)
 
     def exec(command: String): CommandResult = {
         val c = session.openChannel("exec")
 
-        c.asInstanceOf[ChannelExec].setCommand(command)        
+        c.asInstanceOf[ChannelExec].setCommand(command)
 
         c.connect
+
         val is = c.getInputStream
+        val es = c.asInstanceOf[ChannelExec].getErrStream
+
         val source = Source.fromInputStream(is)
         val output = source.mkString
 
-        val es = c.asInstanceOf[ChannelExec].getErrStream
         val errorSource = Source.fromInputStream(es)
         val error = errorSource.mkString
 
@@ -174,19 +170,17 @@ class ServerConnection(private val session: Session, val sc: ServerConfig) {
 
         val out = CommandResult(command, output, error, c.getExitStatus)
 
-        _report = out :: _report
-
         out
 
-//        c.getExitStatus match {
-//            case 0 => _report = ("SUCCESS <" + command + ">") :: _report
-//            case _ => _report = ("FAILURE <" + command + ">") :: _report
-//        }
+        //        c.getExitStatus match {
+        //            case 0 => _report = ("SUCCESS <" + command + ">") :: _report
+        //            case _ => _report = ("FAILURE <" + command + ">") :: _report
+        //        }
 
 
     }
 
-//    def exec(commands: String*): List[CommandResult] = commands.map(exec(_)).toList
+    //    def exec(commands: String*): List[CommandResult] = commands.map(exec(_)).toList
 
     def exec(commands: Iterable[String]): List[CommandResult] = commands.map(exec(_)).toList
 }
